@@ -10,40 +10,24 @@ volatile uint16_t left_sensor = 0;
 volatile uint16_t right_sensor = 0;
 volatile uint16_t granica = 0;
 
-// Definicje pr�dko�ci transmisji (Baud Rate)
+// Definicje prędkości transmisji (Baud Rate)
 #define BAUD 9600
 #define BAUDRATE ((F_CPU)/(BAUD*16UL)-1)
 
-void ADC_Init()
-{
-	// Ustawienie referencji napi�cia
+void ADCVoltageReferenceSet(){
 	ADMUX |= (1 << REFS0);
-	// W��czenie ADC i ustawienie preskalera na 64
-	ADCSRA |= (1 << ADEN) | (1 << ADIE) | (1 << ADPS2) | (1 << ADPS1) | (1 << ADPS0);
 }
 
-uint16_t read_left_sensor()
-{
-	// Wyb�r kana�u ADC - 1
-	ADMUX |= (1 << MUX0);
-	// Rozpocz�cie konwersji
-	ADCSRA |= (1 << ADSC);
-	// Oczekiwanie na zako�czenie konwersji
-	while (ADCSRA & (1 << ADSC));
-	// Zwr�cenie wyniku konwersji
-	return ADC;
+void ADCEnable(){
+	ADCSRA |= (1 << ADEN);
 }
 
-uint16_t read_right_sensor()
-{
-	// Wyb�r kana�u ADC - 0
-	ADMUX &= ~(1 << MUX0);
-	// Rozpocz�cie konwersji
-	ADCSRA |= (1 << ADSC);
-	// Oczekiwanie na zako�czenie konwersji
-	while (ADCSRA & (1 << ADSC));
-	// Zwr�cenie wyniku konwersji
-	return ADC;
+void ADCInterruptEnable(){
+	ADCSRA |= (1 << ADIE);
+}
+
+void ADCSetPrescaler(){
+	ADCSRA |= (1 << ADPS2) | (1 << ADPS1) | (1 << ADPS1);
 }
 
 bool isPressedStartButton()
@@ -71,15 +55,16 @@ bool isPressedPomiarTasma()
 	return false;
 }
 
-void PWM_init()
-{
-	// Ustawienie trybu Fast PWM oraz ustawienie preskalera na 128
+void PWMFastModeSet(){
 	TCCR1A |= (1 << WGM10) | (1 << WGM11);
+}
+
+void PWMSetPrescaler(){
 	TCCR1B |= (1 << CS12);
-	
-	// Ustawienie wyj�cia na pinie OC1A (PB1 oraz PB2)
+}
+
+void PWMSetOutputPins(){
 	TCCR1A |= (1 << COM1A1) | (1 << COM1B1);
-	
 }
 
 bool LeftSensorOK(uint16_t sensor)
@@ -120,33 +105,68 @@ void StopMotors()
 	PORTD &= ~(1 << PORTD2);
 }
 
-// Funkcja do inicjalizacji USART
-void USART_Init(unsigned int ubrr) {
-	// Ustawienie pr�dko�ci transmisji
+void USARTSetTransmissionSpeed(unsigned int ubrr){
 	UBRR0H = (unsigned char)(ubrr >> 8);
 	UBRR0L = (unsigned char)ubrr;
-	// W��czenie nadajnika i odbiornika
-	UCSR0B = (1 << TXEN0) | (1 << RXEN0);
-	// Ustawienie formatu ramki: 8 bit�w danych, 1 bit stopu, bez parzysto�ci
+}
+
+void USARTTransmitterTurnOn(){
+	UCSR0B = (1 << TXEN0);
+}
+
+void USARTReceiverTurnOn(){
+	UCSR0B = (1 << RXEN0);
+}
+
+void USARTFrameFormatSetting(){
 	UCSR0C = (1 << UCSZ01) | (1 << UCSZ00);
 }
 
-// Funkcja do wysy�ania danych przez USART
+// Funkcja do wysyłania danych przez USART
 void USART_Transmit(unsigned char data) {
-	// Czekanie a� bufor nadawczy b�dzie pusty
+	// Czekanie aż bufor nadawczy będzie pusty
 	while (!(UCSR0A & (1 << UDRE0)))
 	;
-	// Wys�anie danych
+	// Wysłanie danych
 	UDR0 = data;
 }
 
 // Funkcja do odbierania danych przez USART
 unsigned char USART_Receive(void) {
-	// Czekanie a� dane zostan� odebrane
+	// Czekanie aż dane zostaną odebrane
 	while (!(UCSR0A & (1 << RXC0)));
-	// Odczytanie i zwr�cenie odebranych danych
+	// Odczytanie i zwrócenie odebranych danych
 	return UDR0;
 }
+
+void ADCSetChannel(){
+	ADMUX = (ADMUX & 0xF0) | (channel & 0x0F);
+}
+
+void ADCStartConversion(){
+	ADCSRA |= (1 << ADSC);
+}
+
+void WaitingForConversionToComplete(){
+	while (ADCSRA & (1 << ADSC));
+}
+
+class ADCValueReader {
+	private:
+	uint8_t Sensor;
+	
+	public:
+	ADCValueReader(uint8_t channel) : Sensor(channel) {}
+		
+	uint16_t ReadSensorMeasurment() {
+
+		ADCSetChannel();	
+		ADCStartConversion();
+		WaitingForConversionToComplete();
+
+		return ADC;
+		}
+	};
 
 int main(void)
 {
@@ -159,7 +179,7 @@ int main(void)
 	bool pom1 = false;
 	bool pom2 = false;
 
-	//ustawienie pin�w jako output
+	//ustawienie pinów jako output
 	DDRB |= (1 << DDB0);
 	DDRB |= (1 << DDB1); //PWM
 	DDRB |= (1 << DDB2); //PWM
@@ -167,43 +187,48 @@ int main(void)
 	DDRD |= (1 << DDD7);
 	DDRD |= (1 << DDD2);
 	
-	//ustawienie pin�w jako input - przyciski
+	//ustawienie pinów jako input - przyciski
 	DDRD &= ~(1 << DDD3);
 	DDRD &= ~(1 << DDD5);
 	DDRD &= ~(1 << DDD6);
 	
-	//podci�gni�cie rezystor�w pullup - do przycisk�w
+	//podciągnięcie rezystorów pullup - do przycisków
 	PORTD |= (1 << PORTD3);
 	PORTD |= (1 << PORTD5);
 	PORTD |= (1 << PORTD6);
 	
-	//inicjalizacja ADC
-	ADC_Init();
+	ADCVoltageReferenceSet();
+	ADCEnable();
+	ADCInterruptEnable();
+	ADCSetPrescaler();
 	
-	//inicjalizacja PWM
-	PWM_init();
+	ADCValueReader LeftSensor(1);
+	ADCValueReader RightSensor(0);
 	
-	//w��czenie globalnych przerwa�
-	//sei();
-	
-	// Inicjalizacja USART z wybran� pr�dko�ci� transmisji
-	USART_Init(BAUDRATE);
+	PWMFastModeSet();
+	PWMSetPrescaler();
+	PWMSetOutputPins();
+
+	USARTSetTransmissionSpeed(BAUDRATE);
+	USARTTransmitterTurnOn();
+	USARTReceiverTurnOn();
+	USARTFrameFormatSetting();
 
 	while (1)
 	{
 		
-		//kalibracja czujnik�w - ustalenie granicy
+		//kalibracja czujników - ustalenie granicy
 		if(isPressedPomiarTasma())
 		{
 			while(isPressedPomiarTasma());
-			pomiar_tasma = read_left_sensor();
+			pomiar_tasma = LeftSensor.ReadSensorMeasurment();
 			pom1 = true;
 		}
 		
 		if(isPressedPomiarKartka())
 		{
 			while(isPressedPomiarKartka());
-			pomiar_kartka = read_right_sensor();
+			pomiar_kartka = RightSensor.ReadSensorMeasurment();
 			pom2 = true;
 		}
 		
@@ -227,11 +252,11 @@ int main(void)
 			pom2 = false;
 		}
 		
-		//g��wny program - warunki jazdy pojazdu
+		//główny program - warunki jazdy pojazdu
 		
 		if(isPressedStartButton() && isMoving == false)
 		{
-			if(LeftSensorOK(left_sensor) == true && RightSensorOK(right_sensor) == true) //je�li oba czujniki widz� lini�
+			if(LeftSensorOK(left_sensor) == true && RightSensorOK(right_sensor) == true) //jeśli oba czujniki widzą linię
 			{
 				//jazda prosto
 				LeftMotor(wypelnienie1);
@@ -239,13 +264,13 @@ int main(void)
 			}
 			else if(LeftSensorOK(left_sensor) == false)
 			{
-				//jazda po �uku w prawo
+				//jazda po łuku w prawo
 				LeftMotor(wypelnienie1);
 				RightMotor(wypelnienie2);
 			}
 			else if(RightSensorOK(right_sensor) == false)
 			{
-				//jazda po �uku w lewo
+				//jazda po łuku w lewo
 				LeftMotor(wypelnienie2);
 				RightMotor(wypelnienie1);
 			}
@@ -258,3 +283,4 @@ int main(void)
 		}
 	}
 }
+
