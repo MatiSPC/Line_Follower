@@ -8,11 +8,34 @@
 
 volatile uint16_t left_sensor = 0;
 volatile uint16_t right_sensor = 0;
-volatile uint16_t granica = 0;
+volatile uint16_t LimitForChangingDirection = 0;
+bool TapeMeasured = false;
+bool PaperMeasured = false;
 
 // Definicje prędkości transmisji (Baud Rate)
 #define BAUD 9600
 #define BAUDRATE ((F_CPU)/(BAUD*16UL)-1)
+
+void UsePinsAsOutput(){
+	DDRB |= (1 << DDB0);
+	DDRB |= (1 << DDB1); //PWM
+	DDRB |= (1 << DDB2); //PWM
+	DDRD |= (1 << DDD4);
+	DDRD |= (1 << DDD7);
+	DDRD |= (1 << DDD2);
+}
+
+void UsePinsAsInput(){
+	DDRD &= ~(1 << DDD3);
+	DDRD &= ~(1 << DDD5);
+	DDRD &= ~(1 << DDD6);
+}
+
+void PullUpResistors(){
+	PORTD |= (1 << PORTD3);
+	PORTD |= (1 << PORTD5);
+	PORTD |= (1 << PORTD6);
+}
 
 void ADCVoltageReferenceSet(){
 	ADMUX |= (1 << REFS0);
@@ -30,8 +53,7 @@ void ADCSetPrescaler(){
 	ADCSRA |= (1 << ADPS2) | (1 << ADPS1) | (1 << ADPS1);
 }
 
-bool isPressedStartButton()
-{
+bool StartButtonPressed(){
 	if(!(PIND & (1 << PIND3)))
 	{
 		return true;
@@ -39,16 +61,14 @@ bool isPressedStartButton()
 	return false;
 }
 
-bool isPressedPomiarKartka()
-{
+bool LeftButtonPressed(){
 	if (!(PIND & (1 << PIND5))) {
 		return true;
 	}
 	return false;
 }
 
-bool isPressedPomiarTasma()
-{
+bool RightButtonPressed(){
 	if (!(PIND & (1 << PIND6))) {
 		return true;
 	}
@@ -69,7 +89,7 @@ void PWMSetOutputPins(){
 
 bool LeftSensorOK(uint16_t sensor)
 {
-	if(sensor < granica)
+	if(sensor < LimitForChangingDirection)
 	{
 		return 1;
 	}
@@ -78,7 +98,7 @@ bool LeftSensorOK(uint16_t sensor)
 
 bool RightSensorOK(uint16_t sensor)
 {
-	if(sensor < granica)
+	if(sensor < LimitForChangingDirection)
 	{
 		return 1;
 	}
@@ -122,20 +142,15 @@ void USARTFrameFormatSetting(){
 	UCSR0C = (1 << UCSZ01) | (1 << UCSZ00);
 }
 
-// Funkcja do wysyłania danych przez USART
 void USART_Transmit(unsigned char data) {
-	// Czekanie aż bufor nadawczy będzie pusty
 	while (!(UCSR0A & (1 << UDRE0)))
 	;
-	// Wysłanie danych
 	UDR0 = data;
 }
 
-// Funkcja do odbierania danych przez USART
 unsigned char USART_Receive(void) {
-	// Czekanie aż dane zostaną odebrane
-	while (!(UCSR0A & (1 << RXC0)));
-	// Odczytanie i zwrócenie odebranych danych
+	while (!(UCSR0A & (1 << RXC0)))
+	;
 	return UDR0;
 }
 
@@ -148,7 +163,8 @@ void ADCStartConversion(){
 }
 
 void WaitingForConversionToComplete(){
-	while (ADCSRA & (1 << ADSC));
+	while (ADCSRA & (1 << ADSC))
+	;
 }
 
 class ADCValueReader {
@@ -159,7 +175,6 @@ class ADCValueReader {
 	ADCValueReader(uint8_t channel) : Sensor(channel) {}
 		
 	uint16_t ReadSensorMeasurment() {
-
 		ADCSetChannel();	
 		ADCStartConversion();
 		WaitingForConversionToComplete();
@@ -167,6 +182,27 @@ class ADCValueReader {
 		return ADC;
 		}
 	};
+
+uint16_t CalibrateSensors(ADCValueReader LeftSensor, ADCValueReader RightSensor){
+	uint16_t MeasurmentOverPaper = 0;
+	uint16_t MeasurmentOverTape = 0;
+	TapeMeasured = false;
+	PaperMeasured = false;
+	
+	if(RightButtonPressed()){
+		while(RightButtonPressed());
+		MeasurmentOverTape = RightSensor.ReadSensorMeasurment();
+		TapeMeasured = true;
+	}
+	
+	if(LeftButtonPressed()){
+		while(LeftButtonPressed());
+		MeasurmentOverPaper = LeftSensor.ReadSensorMeasurment();
+		PaperMeasured = true;
+	}
+	
+	return (MeasurmentOverPaper + MeasurmentOverTape)/2;
+}
 
 int main(void)
 {
@@ -179,23 +215,9 @@ int main(void)
 	bool pom1 = false;
 	bool pom2 = false;
 
-	//ustawienie pinów jako output
-	DDRB |= (1 << DDB0);
-	DDRB |= (1 << DDB1); //PWM
-	DDRB |= (1 << DDB2); //PWM
-	DDRD |= (1 << DDD4);
-	DDRD |= (1 << DDD7);
-	DDRD |= (1 << DDD2);
-	
-	//ustawienie pinów jako input - przyciski
-	DDRD &= ~(1 << DDD3);
-	DDRD &= ~(1 << DDD5);
-	DDRD &= ~(1 << DDD6);
-	
-	//podciągnięcie rezystorów pullup - do przycisków
-	PORTD |= (1 << PORTD3);
-	PORTD |= (1 << PORTD5);
-	PORTD |= (1 << PORTD6);
+	UsePinsAsOutput();
+	UsePinsAsInput();
+	PullUpResistors();
 	
 	ADCVoltageReferenceSet();
 	ADCEnable();
@@ -214,27 +236,10 @@ int main(void)
 	USARTReceiverTurnOn();
 	USARTFrameFormatSetting();
 
-	while (1)
-	{
+	while (1){
+		LimitForChangingDirection = CalibrateSensors(LeftSensor, RightSensor);
 		
-		//kalibracja czujników - ustalenie granicy
-		if(isPressedPomiarTasma())
-		{
-			while(isPressedPomiarTasma());
-			pomiar_tasma = LeftSensor.ReadSensorMeasurment();
-			pom1 = true;
-		}
-		
-		if(isPressedPomiarKartka())
-		{
-			while(isPressedPomiarKartka());
-			pomiar_kartka = RightSensor.ReadSensorMeasurment();
-			pom2 = true;
-		}
-		
-		granica = (pomiar_kartka + pomiar_tasma)/2;
-		
-		if (pom1) {
+		if (pom1){
 			char buffer[20];
 			sprintf(buffer, "Tasma: %u\r\n", pomiar_tasma);
 			for (uint8_t i = 0; buffer[i]; i++) {
@@ -243,7 +248,7 @@ int main(void)
 			pom1 = false;
 		}
 		
-		if (pom2) {
+		if (pom2){
 			char buffer[20];
 			sprintf(buffer, "Kartka: %u\r\n", pomiar_kartka);
 			for (uint8_t i = 0; buffer[i];i++) {
@@ -254,30 +259,26 @@ int main(void)
 		
 		//główny program - warunki jazdy pojazdu
 		
-		if(isPressedStartButton() && isMoving == false)
-		{
+		if(StartButtonPressed() && isMoving == false){
 			if(LeftSensorOK(left_sensor) == true && RightSensorOK(right_sensor) == true) //jeśli oba czujniki widzą linię
 			{
 				//jazda prosto
 				LeftMotor(wypelnienie1);
 				RightMotor(wypelnienie1);
 			}
-			else if(LeftSensorOK(left_sensor) == false)
-			{
+			else if(LeftSensorOK(left_sensor) == false){
 				//jazda po łuku w prawo
 				LeftMotor(wypelnienie1);
 				RightMotor(wypelnienie2);
 			}
-			else if(RightSensorOK(right_sensor) == false)
-			{
+			else if(RightSensorOK(right_sensor) == false){
 				//jazda po łuku w lewo
 				LeftMotor(wypelnienie2);
 				RightMotor(wypelnienie1);
 			}
 			isMoving = true;
 		}
-		else if(isPressedStartButton() && isMoving == true)
-		{
+		else if(StartButtonPressed() && isMoving == true){
 			StopMotors();
 			isMoving = false;
 		}
