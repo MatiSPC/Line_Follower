@@ -1,4 +1,6 @@
 ﻿#define F_CPU 16000000UL
+#define BAUD 9600
+#define BAUDRATE ((F_CPU)/(BAUD*16UL)-1)
 
 #include <avr/io.h>
 #include <util/delay.h>
@@ -9,12 +11,10 @@
 volatile uint16_t left_sensor = 0;
 volatile uint16_t right_sensor = 0;
 volatile uint16_t LimitForChangingDirection = 0;
+volatile uint16_t MeasurmentOverPaper = 0;
+volatile uint16_t MeasurmentOverTape = 0;
 bool TapeMeasured = false;
 bool PaperMeasured = false;
-
-// Definicje prędkości transmisji (Baud Rate)
-#define BAUD 9600
-#define BAUDRATE ((F_CPU)/(BAUD*16UL)-1)
 
 void UsePinsAsOutput(){
 	DDRB |= (1 << DDB0);
@@ -61,15 +61,8 @@ bool StartButtonPressed(){
 	return false;
 }
 
-bool LeftButtonPressed(){
-	if (!(PIND & (1 << PIND5))) {
-		return true;
-	}
-	return false;
-}
-
-bool RightButtonPressed(){
-	if (!(PIND & (1 << PIND6))) {
+bool ButtonPressed(uint8_t pin){
+	if (!(PIND & (1 << pin))){
 		return true;
 	}
 	return false;
@@ -142,7 +135,7 @@ void USARTFrameFormatSetting(){
 	UCSR0C = (1 << UCSZ01) | (1 << UCSZ00);
 }
 
-void USART_Transmit(unsigned char data) {
+void USARTTransmit(unsigned char data) {
 	while (!(UCSR0A & (1 << UDRE0)))
 	;
 	UDR0 = data;
@@ -184,19 +177,19 @@ class ADCValueReader {
 	};
 
 uint16_t CalibrateSensors(ADCValueReader LeftSensor, ADCValueReader RightSensor){
-	uint16_t MeasurmentOverPaper = 0;
-	uint16_t MeasurmentOverTape = 0;
 	TapeMeasured = false;
 	PaperMeasured = false;
+	const uint8_t leftButton = PIND5;
+	const uint8_t rightButton = PIND6;
 	
-	if(RightButtonPressed()){
-		while(RightButtonPressed());
+	if(ButtonPressed(rightButton)){
+		while(ButtonPressed(rightButton));
 		MeasurmentOverTape = RightSensor.ReadSensorMeasurment();
 		TapeMeasured = true;
 	}
 	
-	if(LeftButtonPressed()){
-		while(LeftButtonPressed());
+	if(ButtonPressed(leftButton)){
+		while(ButtonPressed(leftButton));
 		MeasurmentOverPaper = LeftSensor.ReadSensorMeasurment();
 		PaperMeasured = true;
 	}
@@ -204,16 +197,22 @@ uint16_t CalibrateSensors(ADCValueReader LeftSensor, ADCValueReader RightSensor)
 	return (MeasurmentOverPaper + MeasurmentOverTape)/2;
 }
 
+void WriteToConsole(int measurment, bool measured){
+	if (measured){
+		char buffer[20];
+		sprintf(buffer, "Tasma: %u\r\n", measurment);
+		for (uint8_t i = 0; buffer[i]; i++) {
+			USARTTransmit(buffer[i]);
+		}
+		measured = false;
+	}
+}
+
 int main(void)
 {
-	//definiowanie zmiennych
 	uint8_t wypelnienie1 = 200;
 	uint8_t wypelnienie2 = 120;
-	uint16_t pomiar_kartka = 10;
-	uint16_t pomiar_tasma = 10;
 	bool isMoving = false;
-	bool pom1 = false;
-	bool pom2 = false;
 
 	UsePinsAsOutput();
 	UsePinsAsInput();
@@ -239,24 +238,8 @@ int main(void)
 	while (1){
 		LimitForChangingDirection = CalibrateSensors(LeftSensor, RightSensor);
 		
-		if (pom1){
-			char buffer[20];
-			sprintf(buffer, "Tasma: %u\r\n", pomiar_tasma);
-			for (uint8_t i = 0; buffer[i]; i++) {
-				USART_Transmit(buffer[i]);
-			}
-			pom1 = false;
-		}
-		
-		if (pom2){
-			char buffer[20];
-			sprintf(buffer, "Kartka: %u\r\n", pomiar_kartka);
-			for (uint8_t i = 0; buffer[i];i++) {
-				USART_Transmit(buffer[i]);
-			}
-			pom2 = false;
-		}
-		
+		WriteToConsole(MeasurmentOverTape, TapeMeasured);
+		WriteToConsole(MeasurmentOverPaper, PaperMeasured);
 		//główny program - warunki jazdy pojazdu
 		
 		if(StartButtonPressed() && isMoving == false){
