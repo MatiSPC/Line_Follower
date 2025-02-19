@@ -13,6 +13,8 @@ volatile uint16_t right_sensor = 0;
 volatile uint16_t LimitForChangingDirection = 0;
 volatile uint16_t MeasurmentOverPaper = 0;
 volatile uint16_t MeasurmentOverTape = 0;
+uint16_t MotorSpeedFast = 200;
+uint16_t MotorSpeedSlow = 120;
 bool TapeMeasured = false;
 bool PaperMeasured = false;
 
@@ -21,7 +23,7 @@ void UsePinsAsOutput(){
 	DDRB |= (1 << DDB1); //PWM
 	DDRB |= (1 << DDB2); //PWM
 	DDRD |= (1 << DDD4);
-	DDRD |= (1 << DDD7);
+	DDRB |= (1 << DDB3);
 	DDRD |= (1 << DDD2);
 }
 
@@ -98,26 +100,6 @@ bool RightSensorOK(uint16_t sensor)
 	return 0;
 }
 
-void LeftMotor(uint8_t predkosc)
-{
-	OCR1A = predkosc; //PB1 D9
-	PORTB |= (1 << PORTB0); //PB0 D8
-	PORTD &= ~(1 << PORTD7); //PD7 D7
-}
-void RightMotor(uint8_t predkosc)
-{
-	OCR1B = predkosc; //PB2 D10
-	PORTD |= (1 << PORTD4); //PD4 D4
-	PORTD &= ~(1 << PORTD2); //PD2 D2
-}
-void StopMotors()
-{
-	PORTB &= ~(1 << PORTB0);
-	PORTD &= ~(1 << PORTD7);
-	PORTD &= ~(1 << PORTD4);
-	PORTD &= ~(1 << PORTD2);
-}
-
 void USARTSetTransmissionSpeed(unsigned int ubrr){
 	UBRR0H = (unsigned char)(ubrr >> 8);
 	UBRR0L = (unsigned char)ubrr;
@@ -135,45 +117,45 @@ void USARTFrameFormatSetting(){
 	UCSR0C = (1 << UCSZ01) | (1 << UCSZ00);
 }
 
-void USARTTransmit(unsigned char data) {
+void USARTTransmit(unsigned char data){
 	while (!(UCSR0A & (1 << UDRE0)))
 	;
 	UDR0 = data;
 }
 
-unsigned char USART_Receive(void) {
+unsigned char USART_Receive(void){
 	while (!(UCSR0A & (1 << RXC0)))
 	;
 	return UDR0;
 }
 
-void ADCSetChannel(){
-	ADMUX = (ADMUX & 0xF0) | (channel & 0x0F);
-}
-
-void ADCStartConversion(){
-	ADCSRA |= (1 << ADSC);
-}
-
-void WaitingForConversionToComplete(){
-	while (ADCSRA & (1 << ADSC))
-	;
-}
-
-class ADCValueReader {
+class ADCValueReader{
 	private:
 	uint8_t Sensor;
 	
+	void ADCSetChannel(){
+		ADMUX = (ADMUX & 0xF0) | (Sensor & 0x0F);
+	}
+
+	void ADCStartConversion(){
+		ADCSRA |= (1 << ADSC);
+	}
+
+	void WaitingForConversionToComplete(){
+		while (ADCSRA & (1 << ADSC));
+	}
+	
 	public:
-	ADCValueReader(uint8_t channel) : Sensor(channel) {}
+	ADCValueReader(uint8_t channel) : Sensor(channel){}
 		
-	uint16_t ReadSensorMeasurment() {
+	uint16_t ReadSensorMeasurment(){
 		ADCSetChannel();	
 		ADCStartConversion();
 		WaitingForConversionToComplete();
 
 		return ADC;
-		}
+	}
+	
 	};
 
 uint16_t CalibrateSensors(ADCValueReader LeftSensor, ADCValueReader RightSensor){
@@ -208,6 +190,82 @@ void WriteToConsole(int measurment, bool measured){
 	}
 }
 
+struct MotorConfig{
+	volatile uint8_t *port;
+	volatile uint8_t *ddr;
+	volatile uint8_t *ocr;
+	uint8_t pinFwd;
+	uint8_t pinBwd;
+};
+
+class MotorController{
+	private:
+	volatile uint8_t *port;
+	volatile uint8_t *ddr;
+	volatile uint8_t *ocr;
+	uint8_t pinFwd, pinBwd;
+	
+	public:
+	MotorController(const MotorConfig &config)
+	: port(config.port), ddr(config.ddr), ocr(config.ocr), pinFwd(config.pinFwd), pinBwd(config.pinBwd){
+		*ddr |= (1 << pinFwd) | (1 << pinBwd);
+	}
+	
+	void RotateForward(uint8_t Speed){
+		*ocr = Speed;
+		*port |= (1 << pinFwd);
+		*port &= ~(1 << pinBwd);
+	}
+
+	void RotateBackward(uint8_t Speed){
+		*ocr = Speed;
+		*port |= (1 << pinBwd);
+		*port &= ~(1 << pinFwd);
+	}
+
+	void Stop(){
+		*port &= ~(1 << pinFwd);
+		*port &= ~(1 << pinBwd);
+	}
+	
+	};
+
+class DrivingFunctions : public MotorController{
+	private:
+	MotorController LeftMotorr;
+	MotorController RightMotorr;
+	
+	public:
+	DrivingFunctions(const MotorConfig &leftConfig, const MotorConfig &rightConfig)
+	: LeftMotorr(leftConfig), RightMotorr(rightConfig){}
+	
+	void DriveForward(){
+		LeftMotorr.RotateBackward(MotorSpeedFast);
+		RightMotorr.RotateForward(MotorSpeedFast);
+	}
+	
+	void DriveBackward(){
+		LeftMotorr.RotateForward(MotorSpeedSlow);
+		RightMotorr.RotateBackward(MotorSpeedSlow);
+	}
+	
+	void StopVehicle(){
+		LeftMotorr.Stop();
+		RightMotorr.Stop();
+	}
+	
+	void TurnLeft(){
+		LeftMotorr.RotateBackward(MotorSpeedSlow);
+		RightMotorr.RotateForward(MotorSpeedFast);
+	}
+	
+	void TurnRight(){
+		LeftMotorr.RotateBackward(MotorSpeedFast);
+		RightMotorr.RotateForward(MotorSpeedSlow);
+	}
+	
+	};
+
 int main(void)
 {
 	uint8_t wypelnienie1 = 200;
@@ -235,6 +293,11 @@ int main(void)
 	USARTReceiverTurnOn();
 	USARTFrameFormatSetting();
 
+	MotorConfig LeftMotorConfig = { &PORTB, &DDRB, &OCR1A, PORTB0, PORTB3};
+	MotorConfig RightMotorConfig = { &PORTD, &DDRD, &OCR1B, PORTD4, PORTD2};
+
+	DrivingFunctions Vehicle(LeftMotorConfig, RightMotorConfig);
+
 	while (1){
 		LimitForChangingDirection = CalibrateSensors(LeftSensor, RightSensor);
 		
@@ -245,24 +308,18 @@ int main(void)
 		if(StartButtonPressed() && isMoving == false){
 			if(LeftSensorOK(left_sensor) == true && RightSensorOK(right_sensor) == true) //jeśli oba czujniki widzą linię
 			{
-				//jazda prosto
-				LeftMotor(wypelnienie1);
-				RightMotor(wypelnienie1);
+				Vehicle.DriveForward()
 			}
 			else if(LeftSensorOK(left_sensor) == false){
-				//jazda po łuku w prawo
-				LeftMotor(wypelnienie1);
-				RightMotor(wypelnienie2);
+				Vehicle.TurnRight();
 			}
 			else if(RightSensorOK(right_sensor) == false){
-				//jazda po łuku w lewo
-				LeftMotor(wypelnienie2);
-				RightMotor(wypelnienie1);
+				Vehicle.TurnLeft();
 			}
 			isMoving = true;
 		}
 		else if(StartButtonPressed() && isMoving == true){
-			StopMotors();
+			Vehicle.StopVehicle();
 			isMoving = false;
 		}
 	}
