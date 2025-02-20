@@ -8,8 +8,6 @@
 #include <avr/interrupt.h>
 #include <stdio.h>
 
-volatile uint16_t left_sensor = 0;
-volatile uint16_t right_sensor = 0;
 volatile uint16_t LimitForChangingDirection = 0;
 volatile uint16_t MeasurmentOverPaper = 0;
 volatile uint16_t MeasurmentOverTape = 0;
@@ -19,12 +17,8 @@ bool TapeMeasured = false;
 bool PaperMeasured = false;
 
 void UsePinsAsOutput(){
-	DDRB |= (1 << DDB0);
 	DDRB |= (1 << DDB1); //PWM
 	DDRB |= (1 << DDB2); //PWM
-	DDRD |= (1 << DDD4);
-	DDRB |= (1 << DDB3);
-	DDRD |= (1 << DDD2);
 }
 
 void UsePinsAsInput(){
@@ -55,14 +49,6 @@ void ADCSetPrescaler(){
 	ADCSRA |= (1 << ADPS2) | (1 << ADPS1) | (1 << ADPS1);
 }
 
-bool StartButtonPressed(){
-	if(!(PIND & (1 << PIND3)))
-	{
-		return true;
-	}
-	return false;
-}
-
 bool ButtonPressed(uint8_t pin){
 	if (!(PIND & (1 << pin))){
 		return true;
@@ -80,24 +66,6 @@ void PWMSetPrescaler(){
 
 void PWMSetOutputPins(){
 	TCCR1A |= (1 << COM1A1) | (1 << COM1B1);
-}
-
-bool LeftSensorOK(uint16_t sensor)
-{
-	if(sensor < LimitForChangingDirection)
-	{
-		return 1;
-	}
-	return 0;
-}
-
-bool RightSensorOK(uint16_t sensor)
-{
-	if(sensor < LimitForChangingDirection)
-	{
-		return 1;
-	}
-	return 0;
 }
 
 void USARTSetTransmissionSpeed(unsigned int ubrr){
@@ -182,7 +150,7 @@ uint16_t CalibrateSensors(ADCValueReader LeftSensor, ADCValueReader RightSensor)
 void WriteToConsole(int measurment, bool measured){
 	if (measured){
 		char buffer[20];
-		sprintf(buffer, "Tasma: %u\r\n", measurment);
+		sprintf(buffer, "Measure: %u\r\n", measurment);
 		for (uint8_t i = 0; buffer[i]; i++) {
 			USARTTransmit(buffer[i]);
 		}
@@ -232,44 +200,51 @@ class MotorController{
 
 class DrivingFunctions : public MotorController{
 	private:
-	MotorController LeftMotorr;
-	MotorController RightMotorr;
+	MotorController LeftMotor;
+	MotorController RightMotor;
 	
 	public:
 	DrivingFunctions(const MotorConfig &leftConfig, const MotorConfig &rightConfig)
-	: LeftMotorr(leftConfig), RightMotorr(rightConfig){}
+	: LeftMotor(leftConfig), RightMotor(rightConfig){}
 	
 	void DriveForward(){
-		LeftMotorr.RotateBackward(MotorSpeedFast);
-		RightMotorr.RotateForward(MotorSpeedFast);
+		LeftMotor.RotateBackward(MotorSpeedFast);
+		RightMotor.RotateForward(MotorSpeedFast);
 	}
 	
 	void DriveBackward(){
-		LeftMotorr.RotateForward(MotorSpeedSlow);
-		RightMotorr.RotateBackward(MotorSpeedSlow);
+		LeftMotor.RotateForward(MotorSpeedSlow);
+		RightMotor.RotateBackward(MotorSpeedSlow);
 	}
 	
 	void StopVehicle(){
-		LeftMotorr.Stop();
-		RightMotorr.Stop();
+		LeftMotor.Stop();
+		RightMotor.Stop();
 	}
 	
 	void TurnLeft(){
-		LeftMotorr.RotateBackward(MotorSpeedSlow);
-		RightMotorr.RotateForward(MotorSpeedFast);
+		LeftMotor.RotateBackward(MotorSpeedSlow);
+		RightMotor.RotateForward(MotorSpeedFast);
 	}
 	
 	void TurnRight(){
-		LeftMotorr.RotateBackward(MotorSpeedFast);
-		RightMotorr.RotateForward(MotorSpeedSlow);
+		LeftMotor.RotateBackward(MotorSpeedFast);
+		RightMotor.RotateForward(MotorSpeedSlow);
 	}
 	
 	};
 
+bool CheckDrivingCondition(ADCValueReader sensor){
+	uint16_t measure = sensor.ReadSensorMeasurment();
+	
+	if(measure < LimitForChangingDirection){
+		return true;
+	}	
+	return false;
+}
+
 int main(void)
 {
-	uint8_t wypelnienie1 = 200;
-	uint8_t wypelnienie2 = 120;
 	bool isMoving = false;
 
 	UsePinsAsOutput();
@@ -300,27 +275,34 @@ int main(void)
 
 	while (1){
 		LimitForChangingDirection = CalibrateSensors(LeftSensor, RightSensor);
-		
+			
 		WriteToConsole(MeasurmentOverTape, TapeMeasured);
 		WriteToConsole(MeasurmentOverPaper, PaperMeasured);
-		//główny program - warunki jazdy pojazdu
 		
-		if(StartButtonPressed() && isMoving == false){
-			if(LeftSensorOK(left_sensor) == true && RightSensorOK(right_sensor) == true) //jeśli oba czujniki widzą linię
-			{
-				Vehicle.DriveForward()
+		
+		if(ButtonPressed(PIND3)){
+			if(!isMoving){
+				isMoving = true;
+				while(isMoving){
+					if (CheckDrivingCondition(LeftSensor) && CheckDrivingCondition(RightSensor)){
+						Vehicle.DriveForward();
+						} 
+						else if(!CheckDrivingCondition(LeftSensor) && CheckDrivingCondition(RightSensor)){
+						Vehicle.TurnRight();
+						} 
+						else if(!CheckDrivingCondition(RightSensor) && CheckDrivingCondition(LeftSensor)){
+						Vehicle.TurnLeft();
+						} 
+						else{
+						Vehicle.StopVehicle();
+					}
+
+					if (ButtonPressed(PIND3)){
+						Vehicle.StopVehicle();
+						isMoving = false;
+					}
+				}
 			}
-			else if(LeftSensorOK(left_sensor) == false){
-				Vehicle.TurnRight();
-			}
-			else if(RightSensorOK(right_sensor) == false){
-				Vehicle.TurnLeft();
-			}
-			isMoving = true;
-		}
-		else if(StartButtonPressed() && isMoving == true){
-			Vehicle.StopVehicle();
-			isMoving = false;
 		}
 	}
 }
