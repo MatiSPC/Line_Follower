@@ -16,7 +16,11 @@ The project also utilizes UART communication to check the readings from the phot
 - The remaining: 2x 9V Battery, 2x LED, Potentiometer, 4x Resistor, 3x Button, 2x small contact plate, contact plate, connecting cables, rotation wheel, chassis.
 
 ### User manual
-[manual.txt](https://github.com/user-attachments/files/18931882/manual.txt)
+Startup the robot: Connect the microcontroller and power supply.
+(optional) Prepare computer to read the measurments: Connect the microcontroller with computer to start UART communication.
+Calibrating sensors: Place the vehicle so that one photoresistor is above the tape and the other above the paper. Press left button and then right button. The limit for changing the vehicle direction is counted by program.
+Starting driving: Place the vehicle on tape. Press middle (Start) button.
+Ending driving: To stop the motors press middle (Start) button again.
 
 #### Author
 Mateusz Synowski
