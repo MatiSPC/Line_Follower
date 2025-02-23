@@ -3,9 +3,7 @@
 #define BAUDRATE ((F_CPU)/(BAUD*16UL)-1)
 
 #include <avr/io.h>
-#include <util/delay.h>
 #include <stdbool.h>
-#include <avr/interrupt.h>
 #include <stdio.h>
 
 volatile uint16_t LimitForChangingDirection = 0;
